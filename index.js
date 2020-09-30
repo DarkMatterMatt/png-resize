@@ -19,6 +19,7 @@
                 throw err;
             }
             // ignore CORS
+            console.warn("Retrying fetch, bypassing CORS");
             return await fetch("https://cors-anywhere.herokuapp.com/" + url);
         }
     }
@@ -30,71 +31,99 @@
     }
 
     const onSubmit = async ev => {
-        if (ev != null) {
-            ev.preventDefault();
-        }
+        ev.preventDefault();
 
         const width = Number.parseInt($width.value);
         const emojiOrUrl = $emojiUrl.value;
-
-        // check for emoji
-        const resolvedEmojiUrl = getUrlForEmoji(emojiOrUrl);
-        if (resolvedEmojiUrl != null) {
-            await process(new URL(resolvedEmojiUrl), width);
-            return;
-        }
-
-        // check for url
-        let url;
-        try {
-            url = new URL(emojiOrUrl);
-        }
-        catch (err) {
-            // invalid
-            alert("Invalid emoji/URL");
-            return;
-        }
-
-        await process(url, width);
+        await process(emojiOrUrl, width);
     };
 
-    const getUrlForEmoji = name => {
-        const shortcut = allShortcuts.find(s => s.shortcuts.includes(name));
-        if (shortcut != null) {
-            name = shortcut.emoji;
-        }
-        const emoji = allEmoji.find(e => e.names.includes(name));
-        const imgHtml = twemoji.parse(emoji ? emoji.surrogates : name, {
+    const resolveShortcutForName = s => {
+        const shortcut = allShortcuts.find(s => s.shortcuts.includes(s));
+        return shortcut ? shortcut.emoji : null;
+    };
+
+    const resolveNameForSurrogates = n => {
+        const emoji = allEmoji.find(e => e.names.includes(n));
+        return emoji ? emoji.surrogates : null;
+    };
+
+    const resolveSurrogatesForUrl = s => {
+        const imgHtml = twemoji.parse(s, {
             ext: ".svg",
             folder: "svg",
         });
-        if (imgHtml === name) {
+        if (imgHtml === s) {
             return null;
         }
         return strToDOM(imgHtml, "text/html").src;
     };
 
-    const process = async (url, width) => {
-        const blob = await corsFetch(url).then(r => r.blob());
-        const reader = new FileReader();
-        reader.readAsDataURL(blob); 
-        reader.onloadend = () => {
-            const image = document.createElement("img");
-            image.src = reader.result;
-            image.onload = async ev => {
-                if (Number.isNaN(width)) {
-                    width = image.width;
-                }
-                const canvas = new OffscreenCanvas(width, width / image.width * image.height);
-                const context = canvas.getContext("2d");
-        
-                context.drawImage(image, 0, 0, canvas.width, canvas.height);
-                const blob = await canvas.convertToBlob();
-                $img.src = URL.createObjectURL(blob);
-            }
+    const resolveForUrl = str => {
+        try {
+            return new URL(str).href;
         }
+        catch (err) {
+            // invalid URL
+        }
+
+        let result = resolveShortcutForName(str);
+        result = resolveNameForSurrogates(result || str);
+        return resolveSurrogatesForUrl(result || str);
+    }
+
+    const createPromise = () => {
+        let resolve, reject;
+        const promise = new Promise((resolve_, reject_) => {
+            resolve = resolve_;
+            reject = reject_;
+        });
+        return [promise, resolve, reject];
+    }
+
+    const loadImage = async src => {
+        const [promise, resolve, reject] = createPromise();
+        const image = document.createElement("img");
+        image.onload = ev => resolve(ev.target);
+        image.onerror = ev => reject(ev);
+        image.src = src;
+        return promise;
     };
 
-    onSubmit();
+    const process = async (emojiOrUrl, width) => {
+        // resolve input string to url
+        const url = resolveForUrl(emojiOrUrl);
+        if (url == null) {
+            alert("Invalid emoji/URL");
+            return;
+        }
+
+        // fetch the url
+        const response = await corsFetch(url);
+        if (!response.ok) {
+            alert("Failed fetching URL. HTTP status code: " + response.status);
+            return;
+        }
+
+        // create an image element (for width, height, and to draw on the canvas)
+        const blob = await response.blob();
+        const src = URL.createObjectURL(blob);
+        const image = await loadImage(src);
+
+        // default width is unscaled
+        if (Number.isNaN(width)) {
+            width = image.width;
+        }
+
+        // create canvas with the requested dimensions & draw image onto canvas (perform scaling)
+        const canvas = new OffscreenCanvas(width, width / image.width * image.height);
+        canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+
+        // convert canvas to a png & set the output image
+        const scaledBlob = await canvas.convertToBlob();
+        $img.src = URL.createObjectURL(scaledBlob);
+    };
+
+    process($emojiUrl.value, Number.parseInt($width.value));
     $form.addEventListener("submit", onSubmit);
 })();
