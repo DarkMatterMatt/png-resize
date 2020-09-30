@@ -30,7 +30,9 @@
     }
 
     const onSubmit = async ev => {
-        ev.preventDefault();
+        if (ev != null) {
+            ev.preventDefault();
+        }
 
         const width = Number.parseInt($width.value);
         const emojiOrUrl = $emojiUrl.value;
