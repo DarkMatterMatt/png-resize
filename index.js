@@ -60,14 +60,14 @@
             name = shortcut.emoji;
         }
         const emoji = allEmoji.find(e => e.names.includes(name));
-        if (emoji != null) {
-            const imgHtml = twemoji.parse(emoji.surrogates, {
-                ext: ".svg",
-                folder: "svg",
-            });
-            return strToDOM(imgHtml, "text/html").src;
+        const imgHtml = twemoji.parse(emoji ? emoji.surrogates : name, {
+            ext: ".svg",
+            folder: "svg",
+        });
+        if (imgHtml === name) {
+            return null;
         }
-        return null;
+        return strToDOM(imgHtml, "text/html").src;
     };
 
     const process = async (url, width) => {
